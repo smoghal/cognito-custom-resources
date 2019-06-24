@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'S3 Buckets'
+Parameters:
+  InfraBucketName:
+    Type: String
+
+Resources:
+
+  # Infrastucture bucket where all compiled lambda/cloudformation
+  # code will go prior to deployment
+  InfraBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketName: !Join
+        - ''
+        - - !Ref InfraBucketName
+          - '-'
+          - !Ref 'AWS::AccountId'
+          - '-'
+          - !Ref 'AWS::Region'
+  # InfraBucketPolicy:
+  #   Type: AWS::S3::BucketPolicy
+  #   Properties:
+  #     Bucket: !Ref InfraBucket
+
+
+Outputs:
+  StackName:
+    Description: 'StackName'
+    Value: !Sub '${AWS::StackName}'
+  InfraBucketName:
+    Description: 'InfraBucketName'
+    Value: !Ref InfraBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-InfraBucketId'
+  InfraBucketArn:
+    Description: 'InfraBucketArn'
+    Value: !GetAtt InfraBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InfraBucketArn'

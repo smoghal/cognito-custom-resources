@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Cognito user pool for authN and authZ'
+Parameters:
+  Environment:
+    Type: String
+    Description: The current environment
+  AuthName:
+    Type: String
+    Description: Unique Auth Name for Cognito Resources.
+  CognitoRegion:
+    Type: String
+    Description: The region where Cognito user pool resides
+  CognitoDomainPrefix:
+    Type: String
+    Description: The prefix of the custom domain for the Cognito endpoint
+  CognitoResourceServerName:
+    Type: String
+    Description: The Name of a Cognito oauth resource server
+  CognitoResourceServerIdentifier:
+    Type: String
+    Description: The identifier of a Cognito oauth resource server
+  LoggingLevel:
+    Type: String
+    Description: The logging level for the lambda functions
+    Default: DEBUG
+
+Resources:
+  # Create a role that is assumed by Custom Resource Lambda functions
+  LambdaCognitoRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: 'CognitoCustomResourceCreation'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Resource: arn:aws:cognito-idp:*:*:*
+            Action:
+            - cognito-idp:DescribeUserPool
+            - cognito-idp:CreateUserPoolClient
+            - cognito-idp:DescribeUserPoolClient
+            - cognito-idp:UpdateUserPoolClient
+            - cognito-idp:DeleteUserPoolClient
+            - cognito-idp:CreateUserPoolDomain
+            - cognito-idp:DeleteUserPoolDomain
+            - cognito-idp:CreateResourceServer
+            - cognito-idp:UpdateResourceServer
+            - cognito-idp:DeleteResourceServer
+            - cognito-idp:DescribeResourceServer
+          - Effect: Allow
+            Resource: arn:aws:logs:*
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+
+  # Create a role that allows Cognito to send SNS messages
+  SNSRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "cognito-idp.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "CognitoSNSPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action: "sns:publish"
+                Resource: "*"
+              - Effect: "Deny"
+                Action: "sns:publish"
+                Resource: "arn:aws:sns:*:*:*"
+
+  # Create a user pool in cognito for your app to auth against
+  # This example requires MFA and validates the phone number to use as MFA
+  # Other fields can be added to the schema
+  UserPool:
+    Type: "AWS::Cognito::UserPool"
+    Properties:
+      UserPoolName: !Sub ${AuthName}-user-pool-${Environment}
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: "OPTIONAL"
+      SmsConfiguration:
+        ExternalId: !Sub ${AuthName}-external
+        SnsCallerArn: !GetAtt SNSRole.Arn
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: phone_number
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+
+  # Create a User Pool Client to be used by the identity pool
+  UserPoolClient:
+    Type: "AWS::Cognito::UserPoolClient"
+    Properties:
+      ClientName: !Sub ${AuthName}-client
+      GenerateSecret: false
+      UserPoolId: !Ref UserPool
+
+  # Create Cognito Domain using Custom Resource
+  CognitoDomain:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt CognitoDomainCustomResourceLambda.Arn
+      loglevel: !Ref LoggingLevel
+      UserPoolId: !Ref UserPool
+      CognitoDomainPrefix: !Sub ${CognitoDomainPrefix}-${AWS::AccountId}
+      CognitoRegion: !Ref CognitoRegion
+
+  # Lambda function that creates/updates Cognito Domain
+  CognitoDomainCustomResourceLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: A lambda function that backs a custom resource to create a Cognito domain.
+      Role: !GetAtt LambdaCognitoRole.Arn
+      CodeUri: ../../lambda/custom-resources/dist/
+      Runtime: python3.6
+      Handler: cognito_domain.handler
+      Timeout: 30
+
+  # Create an internal Cognito AppClient id with custom scope
+  # CognitoAppClientInternal:
+  #   Type: AWS::CloudFormation::CustomResource
+  #   DependsOn: CognitoResourceServer
+  #   Properties:
+  #     ServiceToken: !GetAtt CognitoAppClientInternalCustomResourceLambda.Arn
+  #     loglevel: !Ref LoggingLevel
+  #     UserPoolId: !Ref UserPool
+  #     AppClientName: !Sub ${AuthName}-internal
+  #     CustomScope: !Sub ${CognitoResourceServerIdentifier}/ddb.read
+  #     CognitoRegion: !Ref CognitoRegion
+
+  # Lambda function that creates/updates Cognito AppClient Id
+  # CognitoAppClientInternalCustomResourceLambda:
+  #   Type: AWS::Serverless::Function
+  #   Properties:
+  #     Description: A lambda function that backs a custom resource to create a Cognito domain.
+  #     Role: !GetAtt LambdaCognitoRole.Arn
+  #     CodeUri: ../../lambda/custom-resources/dist/
+  #     Runtime: python3.6
+  #     Handler: user_pool_client.handler
+  #     Timeout: 30
+
+  # Create a Cognito Resource Server
+  CognitoResourceServer:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt CognitoResourceServerCustomResourceLambda.Arn
+      loglevel: !Ref LoggingLevel
+      UserPoolId: !Ref UserPool
+      Identifier: !Ref CognitoResourceServerIdentifier
+      Name: !Ref CognitoResourceServerName
+      Scopes:
+        - ScopeName: ddb.read
+          ScopeDescription: Read access to the DDB tables
+      CognitoRegion: !Ref CognitoRegion
+
+  # Lambda function that creates/updates Cognito Resource Server
+  CognitoResourceServerCustomResourceLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: A lambda function that backs a custom resource to create a Cognito domain.
+      Role: !GetAtt LambdaCognitoRole.Arn
+      CodeUri: ../../lambda/custom-resources/dist/
+      Runtime: python3.6
+      Handler: resource_server.handler
+      Timeout: 30
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Sub '${AWS::StackName}'
+  UserPoolId:
+    Description: 'UserPoolId'
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+  UserPoolClientId:
+    Description: 'UserPoolClientId'
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"
+  # InternalAppClientId:
+  #   Description: 'InternalAppClientId'
+  #   Value: !Ref CognitoAppClientInternal
+  #   Export:
+  #     Name: !Sub "${AWS::StackName}-InternalAppClientId"
+  CognitoDomainName:
+    Description: 'CognitoDomainName'
+    Value: !Sub '${CognitoDomainPrefix}-${AWS::AccountId}.auth.${CognitoRegion}.amazoncognito.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoDomainName'
+  CognitoResourceServerName:
+    Description: 'CognitoResourceServerName'
+    Value: !Ref CognitoResourceServer
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoResourceServerName'
+  CognitoResourceServerCustomScope:
+    Description: 'CognitoResourceServerCustomScope'
+    Value: !Sub ${CognitoResourceServerIdentifier}/ddb.read
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoResourceServerCustomScope'
+
