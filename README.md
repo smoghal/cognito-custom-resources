@@ -1,5 +1,7 @@
 # Overview
 
+`UPDATE: CloudFormation now natively supports creation of Cognito Domain, Resources and Client ids.  So this code should be used for references purposes only.`
+
 This repository contains sample Lambda functions that handle creating Cognito resources that are currently not supported by CloudFormation.  These Cognito resources are:
 
 - Cognito Domain
@@ -7,6 +9,8 @@ This repository contains sample Lambda functions that handle creating Cognito re
 - Cognito AppClient Id
 
 As the changes are made to the Cognito CloudFormation templates, custom resource Lambda function takes care of automatically updating (creating/deleting) the underlying resources (listed above).
+
+The code uses `crhelper` library from [aws blog](https://aws.amazon.com/blogs/infrastructure-and-automation/aws-cloudformation-custom-resource-creation-with-python-aws-lambda-and-crhelper/) post.
 
 ## Deployment
 

@@ -2,18 +2,20 @@ __version__ = '0.1.0'
 __version_info__ = tuple([int(num) for num in __version__.split('.')])
 
 import boto3
+from crhelper import CfnResource
+import logging
 import re
-import crhelper
 
-# initialise logger
-logger = crhelper.log_config({"RequestId": "CONTAINER_INIT"})
-logger.info('Logging configured')
+logger = logging.getLogger(__name__)
+# Initialise the helper, all inputs are optional, this example shows the defaults
+helper = CfnResource(json_logging=False, log_level='DEBUG', boto_level='CRITICAL')
 
-
+@helper.create
 def create(event, context):
     """
     Creates a user pool client with the specified attributes.
     """
+    logger.debug("Creating app client..")
     resource_properties = event["ResourceProperties"]
 
     user_pool_id = resource_properties.get("UserPoolId")
@@ -23,25 +25,31 @@ def create(event, context):
 
     client = boto3.client("cognito-idp", region_name=cognito_region)
 
-    response = client.create_user_pool_client(
-        UserPoolId=user_pool_id,
-        ClientName=app_client_name,
-        GenerateSecret=True,
-        RefreshTokenValidity=30,
-        AllowedOAuthFlows=[
-            'client_credentials',
-        ],
-        AllowedOAuthScopes=[
-            scope
-        ],
-        AllowedOAuthFlowsUserPoolClient=True
-    )
+    try:
+        response = client.create_user_pool_client(
+            UserPoolId=user_pool_id,
+            ClientName=app_client_name,
+            GenerateSecret=True,
+            RefreshTokenValidity=30,
+            AllowedOAuthFlows=[
+                'client_credentials',
+            ],
+            AllowedOAuthScopes=[
+                scope
+            ],
+            AllowedOAuthFlowsUserPoolClient=True
+        )
 
-    physical_resource_id = response.get("UserPoolClient").get("ClientId")
-    response_data = {}
-    return physical_resource_id, response_data
+        logger.debug("Finished creating app client..")
 
+        physical_resource_id = response.get("UserPoolClient").get("ClientId")
+        return physical_resource_id
 
+    except Exception as err:
+        logger.error("exception occured: {}".format(err))
+        raise ValueError("unable to create app client: {}".format(err))
+
+@helper.update
 def update(event, context):
     """
     Updates a user pool client with the specified attributes.
@@ -49,6 +57,8 @@ def update(event, context):
     update the client's other properties,
     Add them in the update_user_pool_client call here.
     """
+    logger.debug("Updating app client..")
+
     resource_properties = event["ResourceProperties"]
 
     user_pool_id = resource_properties.get("UserPoolId")
@@ -77,6 +87,8 @@ def update(event, context):
             AllowedOAuthFlowsUserPoolClient=True
         )
         physical_resource_id = event['PhysicalResourceId']
+        return physical_resource_id
+
     except Exception:
         response = client.create_user_pool_client(
             UserPoolId=user_pool_id,
@@ -92,16 +104,15 @@ def update(event, context):
             AllowedOAuthFlowsUserPoolClient=True
         )
         physical_resource_id = response.get("UserPoolClient").get("ClientId")
+        return physical_resource_id
 
-    response_data = {}
-    return physical_resource_id, response_data
-
-
+@helper.delete
 def delete(event, context):
     """
     Delete a user pool client.
 
     """
+    logger.debug("Deleting app client..")
 
     user_pool_id = event["ResourceProperties"].get("UserPoolId")
     cognito_region = event["ResourceProperties"].get("CognitoRegion")
@@ -125,15 +136,20 @@ def delete(event, context):
         UserPoolId=user_pool_id,
         ClientId=event['PhysicalResourceId']
     )
+
+    logger.debug("Finished deleting app client..")
+
     return
 
+@helper.poll_create
+def poll_create(event, context):
+    logger.info("Create polling..")
+    # Return a resource id or True to indicate that creation is complete. if True is returned an id
+    # will be generated
+    return True
 
 def handler(event, context):
     """
     Main handler function, passes off it's work to crhelper's cfn_handler
     """
-    # update the logger with event info
-    global logger
-    logger = crhelper.log_config(event)
-    return crhelper.cfn_handler(event, context, create, update, delete, logger,
-                                False)
+    helper(event, context)
