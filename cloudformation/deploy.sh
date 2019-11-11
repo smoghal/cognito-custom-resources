@@ -80,16 +80,18 @@ echo "Building python lambda(s)..."
     cd "${lambda_code_path}"
     # rebuild python virtual environment
     virtualenv .venv
-    pip install -r requirements.txt
     # activate virtual environment
-    source .venv/bin/activate
+    source ./.venv/bin/activate
+
+    pip3 install -r requirements.txt --user
     # rebuild the ./dist folder
     rm -rf "${dist_path}"
     mkdir "${dist_path}"
     cp *.py requirements.txt "${dist_path}"
+    cp -R crhelper "${dist_path}"
 
     echo "Installing dependencies..."
-    pip install --target="${dist_path}" -r "${dist_path}/requirements.txt"
+    pip3 install --target="${dist_path}" -r "${dist_path}/requirements.txt"
 ) >& /tmp/$$.build
 
 if [ $? -ne 0 ]; then
